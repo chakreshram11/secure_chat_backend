@@ -8,6 +8,7 @@ const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const messagesRoutes = require('./routes/messages');
 const adminRoutes = require('./routes/admin');
+
 const { initSocket } = require('./socket');
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/messages', messagesRoutes);
+app.use("/uploads", express.static("uploads"));
 
 // Static files (for uploaded media)
 app.use('/files', express.static('files'));
