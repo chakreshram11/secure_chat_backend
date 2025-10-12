@@ -8,6 +8,7 @@ const isAdmin = require("../middleware/isAdmin");
 const router = express.Router();
 
 /* -------- User Management -------- */
+/* -------- User Management -------- */
 router.get("/users", auth, isAdmin, async (req, res) => {
   const users = await User.find().select("-passwordHash");
   res.json(users);
@@ -18,7 +19,8 @@ router.post("/users", auth, isAdmin, async (req, res) => {
     const { username, password, displayName, role } = req.body;
 
     const existing = await User.findOne({ username });
-    if (existing) return res.status(400).json({ error: "Username already exists" });
+    if (existing)
+      return res.status(400).json({ error: "Username already exists" });
 
     const passwordHash = await bcrypt.hash(password, 12);
     const user = new User({
@@ -29,37 +31,95 @@ router.post("/users", auth, isAdmin, async (req, res) => {
     });
     await user.save();
 
-    // 🔔 Emit socket event
+    // ✅ Emit unified socket event for creation
     const io = req.app.get("io");
-    io.emit("userAdded", { id: user._id, username: user.username });
+    if (io) {
+      io.emit("user:new", {
+        _id: user._id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
+      });
 
-    res.json(user);
+      // 💬 Optional: broadcast welcome message
+      io.emit("message", {
+        type: "system",
+        ciphertext: `🎉 ${user.displayName || user.username} has been added by Admin!`,
+        createdAt: new Date(),
+      });
+
+      console.log(`📢 Admin added new user: ${user.username}`);
+    }
+
+    res.json({
+      user: {
+        id: user._id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
+      },
+    });
   } catch (err) {
-    console.error(err);
+    console.error("❌ Admin add user error:", err);
     res.status(500).json({ error: "Failed to add user" });
   }
 });
 
 router.put("/users/:id", auth, isAdmin, async (req, res) => {
-  const updates = req.body;
-  const user = await User.findByIdAndUpdate(req.params.id, updates, {
-    new: true,
-  }).select("-passwordHash");
+  try {
+    const updates = req.body;
+    const user = await User.findByIdAndUpdate(req.params.id, updates, {
+      new: true,
+    }).select("-passwordHash");
 
-  const io = req.app.get("io");
-  io.emit("userUpdated", { id: user._id });
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("user:updated", {
+        _id: user._id,
+        username: user.username,
+        role: user.role,
+      });
+    }
 
-  res.json(user);
+    res.json(user);
+  } catch (err) {
+    console.error("❌ Admin update user error:", err);
+    res.status(500).json({ error: "Failed to update user" });
+  }
 });
 
 router.delete("/users/:id", auth, isAdmin, async (req, res) => {
-  await User.findByIdAndDelete(req.params.id);
+  try {
+    const deletedUser = await User.findByIdAndDelete(req.params.id);
 
-  const io = req.app.get("io");
-  io.emit("userDeleted", { id: req.params.id });
+    if (!deletedUser)
+      return res.status(404).json({ error: "User not found" });
 
-  res.json({ ok: true });
+    const io = req.app.get("io");
+    if (io) {
+      // ✅ Unified delete event
+      io.emit("user:deleted", {
+        _id: req.params.id,
+        username: deletedUser.username,
+      });
+
+      // 💬 Optional broadcast
+      io.emit("message", {
+        type: "system",
+        ciphertext: `❌ ${deletedUser.displayName || deletedUser.username} was removed by Admin.`,
+        createdAt: new Date(),
+      });
+
+      console.log(`🗑️ Admin deleted user: ${deletedUser.username}`);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ Admin delete user error:", err);
+    res.status(500).json({ error: "Failed to delete user" });
+  }
 });
+
 
 /* -------- Group Management -------- */
 router.get("/groups", auth, isAdmin, async (req, res) => {

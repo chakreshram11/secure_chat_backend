@@ -9,9 +9,9 @@ const isAdmin = require("../middleware/isAdmin");
 const router = express.Router();
 
 /* -------- Admin Creates User -------- */
-router.post("/register", auth, isAdmin, async (req, res) => {
+router.post("/register", async (req, res) => {
   try {
-    const { username, password, displayName, role, ecdhPublicKey } = req.body;
+    const { username, password, displayName, ecdhPublicKey } = req.body;
 
     if (await User.findOne({ username })) {
       return res.status(400).json({ error: "User already exists" });
@@ -26,23 +26,49 @@ router.post("/register", auth, isAdmin, async (req, res) => {
       username,
       passwordHash,
       displayName,
-      role: role || "user",
-      ecdhPublicKey, // ✅ Save at registration
+      role: "user",
+      ecdhPublicKey,
     });
-
     await user.save();
 
+    const io = req.app.get("io");
+    if (io) {
+      // Notify everyone in real time
+      io.emit("user:new", {
+        _id: user._id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
+      });
+
+      // Optional welcome broadcast
+      io.emit("message", {
+        type: "system",
+        ciphertext: `🎉 Welcome ${user.displayName || user.username} to Secure Chat!`,
+        createdAt: new Date(),
+      });
+    }
+
+    const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
+
     res.json({
-      ok: true,
-      id: user._id,
-      username: user.username,
-      role: user.role,
+      token,
+      user: {
+        id: user._id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
+        ecdhPublicKey: user.ecdhPublicKey,
+      },
     });
   } catch (err) {
     console.error("❌ Register error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 /* -------- User Login -------- */
 router.post("/login", async (req, res) => {
@@ -109,6 +135,59 @@ router.post('/uploadKey', auth, async (req, res) => {
     res.json({ ok: true, message: "Public key saved" });
   } catch (err) {
     console.error("❌ uploadKey error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+/* -------- Admin Creates User -------- */
+router.post("/admin/register", auth, isAdmin, async (req, res) => {
+  try {
+    const { username, password, displayName, role, ecdhPublicKey } = req.body;
+
+    if (await User.findOne({ username })) {
+      return res.status(400).json({ error: "User already exists" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = new User({
+      username,
+      passwordHash,
+      displayName,
+      role: role || "user",
+      ecdhPublicKey,
+    });
+
+    await user.save();
+
+    // ✅ Broadcast to all connected clients
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("user:new", {
+        _id: user._id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
+      });
+
+      // ✅ Optional welcome message
+      io.emit("message", {
+        type: "system",
+        ciphertext: `👤 ${user.displayName || user.username} has been added by Admin.`,
+        createdAt: new Date(),
+      });
+
+      console.log(`📢 Admin created new user broadcasted: ${user.username}`);
+    }
+
+    res.json({
+      ok: true,
+      id: user._id,
+      username: user.username,
+      displayName: user.displayName,
+      role: user.role,
+    });
+  } catch (err) {
+    console.error("❌ Admin register error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
